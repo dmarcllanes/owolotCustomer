@@ -1,0 +1,117 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-aws.yml"
+      - "Dockerfile"
+      - "infra/aws/**"
+      - "main.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "static/**"
+      - "assets/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: owolot-customer
+  STACK_NAME: owolot-customer
+
+jobs:
+  deploy:
+    name: Build and deploy container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployment configuration
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$AWS_REGION" ] || [ -z "$AWS_ROLE_ARN" ]; then
+            echo "::error::Set the AWS_REGION repository variable and AWS_ROLE_ARN Actions secret before deploying."
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        run: |
+          if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+          fi
+
+      - name: Sign in to Amazon ECR
+        id: ecr
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry"
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          image_uri="${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag "$image_uri" \
+            --push \
+            .
+          echo "uri=$image_uri" >> "$GITHUB_OUTPUT"
+
+      - name: Find CloudFront origin prefix list
+        id: cloudfront-prefix
+        run: |
+          prefix_list_id="$(aws ec2 describe-managed-prefix-lists \
+            --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing \
+            --query 'PrefixLists[0].PrefixListId' \
+            --output text)"
+          if [ -z "$prefix_list_id" ] || [ "$prefix_list_id" = "None" ]; then
+            echo "::error::Could not find the CloudFront origin-facing managed prefix list in $AWS_REGION."
+            exit 1
+          fi
+          echo "id=$prefix_list_id" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy infrastructure and application
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          CLOUDFRONT_PREFIX_LIST_ID: ${{ steps.cloudfront-prefix.outputs.id }}
+        run: |
+          aws cloudformation deploy \
+            --template-file infra/aws/stack.yaml \
+            --stack-name "$STACK_NAME" \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides \
+              "ImageUri=${IMAGE_URI}" \
+              "CloudFrontPrefixListId=${CLOUDFRONT_PREFIX_LIST_ID}" \
+            --no-fail-on-empty-changeset
+
+      - name: Show deployment URLs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' \
+            --output table

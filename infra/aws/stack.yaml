@@ -1,0 +1,450 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Owolot customer website on ECS Fargate with persistent SQLite storage.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: Immutable ECR image URI tagged with the Git commit SHA.
+  CloudFrontPrefixListId:
+    Type: String
+    Description: Regional ID for the AWS-managed CloudFront origin-facing prefix list.
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: owolot-customer
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.42.0.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: owolot-public-a
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.42.16.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: owolot-public-b
+
+  PublicSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetA
+
+  PublicSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetB
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow CloudFront origin traffic to the load balancer.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress: []
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow application traffic only from the load balancer and EFS.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS from the Owolot application tasks.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress: []
+
+  LoadBalancerFromCloudFront:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: HTTP from the AWS-managed CloudFront origin-facing ranges.
+      GroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourcePrefixListId: !Ref CloudFrontPrefixListId
+
+  LoadBalancerToApp:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Forward requests to the application tasks.
+      GroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 8000
+      DestinationSecurityGroupId: !GetAtt AppSecurityGroup.GroupId
+
+  AppFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Application traffic from the load balancer.
+      GroupId: !GetAtt AppSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 8000
+      SourceSecurityGroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+
+  AppFromEfs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: NFS traffic from the EFS mount targets.
+      GroupId: !GetAtt AppSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !GetAtt EfsSecurityGroup.GroupId
+
+  EfsFromApp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: NFS from the application security group.
+      GroupId: !GetAtt EfsSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !GetAtt AppSecurityGroup.GroupId
+
+  BetaRequestsFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      BackupPolicy:
+        Status: ENABLED
+      FileSystemTags:
+        - Key: Name
+          Value: owolot-beta-requests
+
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref BetaRequestsFileSystem
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroups:
+        - !GetAtt EfsSecurityGroup.GroupId
+
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref BetaRequestsFileSystem
+      SubnetId: !Ref PublicSubnetB
+      SecurityGroups:
+        - !GetAtt EfsSecurityGroup.GroupId
+
+  BetaRequestsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref BetaRequestsFileSystem
+      PosixUser:
+        Uid: "10001"
+        Gid: "10001"
+      RootDirectory:
+        Path: /owolot-beta
+        CreationInfo:
+          OwnerUid: "10001"
+          OwnerGid: "10001"
+          Permissions: "0750"
+
+  AppCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: owolot-customer
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  AdminCredentials:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Generated admin credentials for the Owolot beta request dashboard.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"owolot-admin"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\\'
+      Tags:
+        - Key: Name
+          Value: owolot-admin-credentials
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadBetaAdminCredentials
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AdminCredentials
+
+  AppTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: WriteBetaRequestsToEfs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Resource: !GetAtt BetaRequestsFileSystem.Arn
+                Condition:
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn: !GetAtt BetaRequestsAccessPoint.Arn
+
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/owolot-customer
+      RetentionInDays: 30
+
+  AppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - EfsMountTargetA
+      - EfsMountTargetB
+    Properties:
+      Family: owolot-customer
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "256"
+      Memory: "512"
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt AppTaskRole.Arn
+      Volumes:
+        - Name: beta-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref BetaRequestsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref BetaRequestsAccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: owolot-customer
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: "8000"
+            - Name: DATABASE_PATH
+              Value: /data/beta_requests.sqlite3
+          Secrets:
+            - Name: BETA_ADMIN_USERNAME
+              ValueFrom: !Sub "${AdminCredentials}:username::"
+            - Name: BETA_ADMIN_PASSWORD
+              ValueFrom: !Sub "${AdminCredentials}:password::"
+          MountPoints:
+            - SourceVolume: beta-data
+              ContainerPath: /data
+              ReadOnly: false
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/', timeout=3)"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      SecurityGroups:
+        - !GetAtt LoadBalancerSecurityGroup.GroupId
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      TargetType: ip
+      Port: 8000
+      Protocol: HTTP
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  AppService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HttpListener
+      - EfsMountTargetA
+      - EfsMountTargetB
+    Properties:
+      ServiceName: owolot-customer
+      Cluster: !Ref AppCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnetA
+            - !Ref PublicSubnetB
+          SecurityGroups:
+            - !GetAtt AppSecurityGroup.GroupId
+      LoadBalancers:
+        - ContainerName: owolot-customer
+          ContainerPort: 8000
+          TargetGroupArn: !Ref AppTargetGroup
+      TaskDefinition: !Ref AppTaskDefinition
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Owolot customer website and beta request dashboard.
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: OwolotApplicationLoadBalancer
+            DomainName: !GetAtt LoadBalancer.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: OwolotApplicationLoadBalancer
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 413f0cc3-94c9-4c54-ae75-58a7f51b2c2d
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  WebsiteUrl:
+    Description: HTTPS website URL served by CloudFront.
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+  AdminUrl:
+    Description: Private beta request admin URL.
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}/admin/beta"
+  EfsFileSystemId:
+    Description: Persistent encrypted EFS file system holding beta requests.
+    Value: !Ref BetaRequestsFileSystem
+  AdminCredentialsSecretArn:
+    Description: Retrieve the generated dashboard credentials from Secrets Manager.
+    Value: !Ref AdminCredentials
