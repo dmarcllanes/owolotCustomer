@@ -625,11 +625,28 @@ def load_beta_requests() -> list[dict[str, str]]:
     ]
 
 
+ADMIN_SESSION_COOKIE = "owolot_admin_session"
+
+
+def admin_session_token(expected_username: str, expected_password: str) -> str:
+    return hmac.new(
+        expected_password.encode("utf-8"),
+        f"owolot-admin:{expected_username}".encode("utf-8"),
+        "sha256",
+    ).hexdigest()
+
+
 def admin_is_authenticated(request: Request) -> bool:
-    expected_username = os.environ.get("BETA_ADMIN_USERNAME")
-    expected_password = os.environ.get("BETA_ADMIN_PASSWORD")
+    expected_username = os.environ.get("BETA_ADMIN_USERNAME", "").strip()
+    expected_password = os.environ.get("BETA_ADMIN_PASSWORD", "").strip()
     if not expected_username or not expected_password:
         return False
+
+    cookie_token = request.cookies.get(ADMIN_SESSION_COOKIE, "")
+    if cookie_token and hmac.compare_digest(
+        cookie_token, admin_session_token(expected_username, expected_password)
+    ):
+        return True
 
     authorization = request.headers.get("authorization", "")
     scheme, _, credentials = authorization.partition(" ")
@@ -641,14 +658,59 @@ def admin_is_authenticated(request: Request) -> bool:
     except (binascii.Error, UnicodeDecodeError, ValueError):
         return False
 
-    username_matches = hmac.compare_digest(username, expected_username)
-    password_matches = hmac.compare_digest(password, expected_password)
+    username_matches = hmac.compare_digest(username.strip(), expected_username)
+    password_matches = hmac.compare_digest(password.strip(), expected_password)
     return username_matches and password_matches
+
+
+def admin_login_page(
+    *,
+    message: str = "Sign in is required to view beta requests.",
+    status: int = 200,
+    include_basic_challenge: bool = False,
+) -> HTMLResponse:
+    feedback = (
+        f'<p class="form-feedback" role="status">{html.escape(message)}</p>' if message else ""
+    )
+    document = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Admin sign in — Owolot</title>
+    <link rel="stylesheet" href="/static/site.css">
+  </head>
+  <body class="admin-page">
+    {SITE_HEADER}
+    <main class="section-wrap admin-main">
+      <p class="eyebrow">Private admin</p>
+      <h1>Admin sign in</h1>
+      <p class="admin-intro">Sign in is required to view beta requests.</p>
+      <div class="beta-form-card admin-login-card">
+        {feedback}
+        <form class="beta-form" method="post" action="/admin/login" aria-label="Admin sign in">
+          <label for="admin-username">Username</label>
+          <input id="admin-username" name="username" type="text" autocomplete="username" required>
+          <label for="admin-password">Password</label>
+          <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+          <button class="button button-primary beta-submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
+        </form>
+      </div>
+    </main>
+    {SITE_FOOTER}
+  </body>
+</html>"""
+    headers = {"Cache-Control": "no-store"}
+    if include_basic_challenge:
+        headers["WWW-Authenticate"] = 'Basic realm="Owolot beta requests"'
+    return HTMLResponse(document, status_code=status, headers=headers)
 
 
 def admin_unauthorized() -> Response:
     configured = bool(
-        os.environ.get("BETA_ADMIN_USERNAME") and os.environ.get("BETA_ADMIN_PASSWORD")
+        os.environ.get("BETA_ADMIN_USERNAME", "").strip()
+        and os.environ.get("BETA_ADMIN_PASSWORD", "").strip()
     )
     if not configured:
         return HTMLResponse(
@@ -656,13 +718,10 @@ def admin_unauthorized() -> Response:
             status_code=503,
             headers={"Cache-Control": "no-store"},
         )
-    return HTMLResponse(
-        "Sign in is required to view beta requests.",
-        status_code=401,
-        headers={
-            "WWW-Authenticate": 'Basic realm="Owolot beta requests"',
-            "Cache-Control": "no-store",
-        },
+    return admin_login_page(
+        message="Sign in is required to view beta requests.",
+        status=401,
+        include_basic_challenge=True,
     )
 
 
@@ -740,6 +799,76 @@ async def submit_beta_request(request: Request) -> Response:
     )
 
 
+@app.get("/admin")
+@app.get("/admin/login")
+def admin_login_get(request: Request) -> Response:
+    expected_username = os.environ.get("BETA_ADMIN_USERNAME", "").strip()
+    expected_password = os.environ.get("BETA_ADMIN_PASSWORD", "").strip()
+    if not expected_username or not expected_password:
+        return HTMLResponse(
+            "Beta request dashboard is not configured.",
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
+    if admin_is_authenticated(request):
+        return Response(
+            status_code=303,
+            headers={"Location": "/admin/beta", "Cache-Control": "no-store"},
+        )
+    return admin_login_page(message="", status=200)
+
+
+@app.post("/admin/login")
+async def admin_login_post(request: Request) -> Response:
+    expected_username = os.environ.get("BETA_ADMIN_USERNAME", "").strip()
+    expected_password = os.environ.get("BETA_ADMIN_PASSWORD", "").strip()
+    if not expected_username or not expected_password:
+        return HTMLResponse(
+            "Beta request dashboard is not configured.",
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    try:
+        form = await request.form()
+    except (ValueError, UnicodeDecodeError):
+        return admin_login_page(message="Enter your admin username and password.", status=400)
+
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", "")).strip()
+    username_matches = hmac.compare_digest(username, expected_username)
+    password_matches = hmac.compare_digest(password, expected_password)
+    if not (username_matches and password_matches):
+        return admin_login_page(
+            message="Invalid username or password. Sign in is required to view beta requests.",
+            status=401,
+        )
+
+    response = Response(
+        status_code=303,
+        headers={"Location": "/admin/beta", "Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        key=ADMIN_SESSION_COOKIE,
+        value=admin_session_token(expected_username, expected_password),
+        path="/admin",
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
+@app.post("/admin/logout")
+def admin_logout() -> Response:
+    response = Response(
+        status_code=303,
+        headers={"Location": "/admin/login", "Cache-Control": "no-store"},
+    )
+    response.delete_cookie(key=ADMIN_SESSION_COOKIE, path="/admin")
+    return response
+
+
 @app.get("/admin/beta")
 def beta_admin(request: Request) -> Response:
     if not admin_is_authenticated(request):
@@ -778,8 +907,15 @@ def beta_admin(request: Request) -> Response:
   <body class="admin-page">
     {SITE_HEADER}
     <main class="section-wrap admin-main">
-      <p class="eyebrow">Private admin</p>
-      <h1>Beta access requests</h1>
+      <div class="admin-header-row">
+        <div>
+          <p class="eyebrow">Private admin</p>
+          <h1>Beta access requests</h1>
+        </div>
+        <form method="post" action="/admin/logout">
+          <button class="admin-logout-btn" type="submit">Sign out</button>
+        </form>
+      </div>
       <p class="admin-intro">Review the email and device type, then send installation instructions yourself.</p>
       <div class="admin-table-wrap">
         <table class="admin-table">

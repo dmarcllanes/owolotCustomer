@@ -1028,14 +1028,16 @@ h2 {
   gap: 11px;
 }
 
-.beta-form > label:first-child,
+.beta-form > label,
 .platform-options legend {
   color: var(--ink);
   font-size: 0.83rem;
   font-weight: 700;
 }
 
-.beta-form input[type="email"] {
+.beta-form input[type="email"],
+.beta-form input[type="text"],
+.beta-form input[type="password"] {
   width: 100%;
   min-height: 48px;
   padding: 11px 13px;
@@ -1047,7 +1049,9 @@ h2 {
   font-size: 0.9rem;
 }
 
-.beta-form input[type="email"]::placeholder {
+.beta-form input[type="email"]::placeholder,
+.beta-form input[type="text"]::placeholder,
+.beta-form input[type="password"]::placeholder {
   color: #706b7f;
   opacity: 1;
 }
@@ -1307,6 +1311,31 @@ h2 {
 .admin-note {
   margin-top: 14px;
   font-size: 0.76rem;
+}
+
+.admin-login-card {
+  max-width: 440px;
+  margin: 24px 0 0;
+}
+
+.admin-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-logout-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--white);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
 }
 
 .sr-only {

@@ -319,4 +319,27 @@ class LandingPageTests(unittest.TestCase):
         self.assertEqual(fake_client.db_names, ["owolot_customer", "owolot_customer"])
         self.assertFalse(Path(os.environ["DATABASE_PATH"]).exists())
 
+    def test_admin_login_endpoint_authenticates_and_redirects_to_dashboard(self):
+        login_page = self.client.get("/admin/login")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertIn('action="/admin/login"', login_page.text)
+        self.assertNotIn("www-authenticate", login_page.headers)
+
+        bad_login = self.client.post(
+            "/admin/login",
+            data={"username": "test-admin", "password": "wrong-password"},
+        )
+        self.assertEqual(bad_login.status_code, 401)
+        self.assertIn("Invalid username or password.", bad_login.text)
+
+        good_login = self.client.post(
+            "/admin/login",
+            data={"username": "test-admin", "password": "test-password"},
+            follow_redirects=True,
+        )
+        self.assertEqual(good_login.status_code, 200)
+        self.assertIn("<h1>Beta access requests</h1>", good_login.text)
+        self.assertIn('action="/admin/logout"', good_login.text)
+
+
 
