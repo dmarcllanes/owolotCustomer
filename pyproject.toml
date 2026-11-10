@@ -9,6 +9,7 @@ description = "Owolot public landing page"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "certifi",
     "pymongo>=4.9",
     "python-fasthtml",
     "uvicorn[standard]",

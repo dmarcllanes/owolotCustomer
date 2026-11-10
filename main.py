@@ -15,6 +15,7 @@ from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 import uvicorn
+from dotenv import load_dotenv
 from fasthtml.common import fast_app
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
@@ -24,6 +25,7 @@ from starlette.staticfiles import StaticFiles
 
 PRODUCT_NAME = "Owolot"
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 ASSETS_DIR = BASE_DIR / "assets"
 STATIC_DIR = BASE_DIR / "static"
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -440,20 +442,25 @@ def open_database() -> sqlite3.Connection:
 
 
 def mongodb_config() -> tuple[str, str] | None:
-    uri = os.environ.get("MONGODB_URI", "").strip()
+    uri = os.environ.get("MONGODB_URI", "").strip().strip("\"'").strip()
     if not uri:
         return None
     if not (uri.startswith("mongodb://") or uri.startswith("mongodb+srv://")):
         raise RuntimeError("MONGODB_URI must start with mongodb:// or mongodb+srv://.")
-    database_name = os.environ.get("MONGODB_DATABASE", "owolot").strip() or "owolot"
+    database_name = (
+        os.environ.get("MONGODB_DATABASE", "owolot").strip().strip("\"'").strip()
+        or "owolot"
+    )
     return uri, database_name
 
 
 def open_mongodb_client(uri: str):
+    import certifi
     from pymongo import MongoClient
 
     return MongoClient(
         uri,
+        tlsCAFile=certifi.where(),
         serverSelectionTimeoutMS=5000,
         connectTimeoutMS=5000,
         socketTimeoutMS=5000,
