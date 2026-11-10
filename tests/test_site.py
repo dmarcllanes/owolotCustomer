@@ -1,9 +1,12 @@
 import base64
+import io
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib import error as urllib_error
 
 from starlette.testclient import TestClient
 
@@ -20,6 +23,10 @@ class LandingPageTests(unittest.TestCase):
                 "DATABASE_PATH": str(Path(self.data_dir.name) / "requests.sqlite3"),
                 "BETA_ADMIN_USERNAME": "test-admin",
                 "BETA_ADMIN_PASSWORD": "test-password",
+                "SUPABASE_URL": "",
+                "SUPABASE_SERVICE_ROLE_KEY": "",
+                "MONGODB_URI": "",
+                "MONGODB_DATABASE": "",
             },
         )
         self.env_patch.start()
@@ -163,3 +170,153 @@ class LandingPageTests(unittest.TestCase):
             mascot.content,
             (Path(__file__).parents[1] / "assets/mascot/happy.png").read_bytes(),
         )
+
+    def test_supabase_storage_is_used_when_explicitly_configured(self):
+        captured_requests = []
+
+        class FakeHttpResponse:
+            def __init__(self, status: int, body: bytes = b""):
+                self.status = status
+                self._body = body
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def fake_urlopen(req, timeout=5):
+            captured_requests.append((req, timeout))
+            if req.get_method() == "POST":
+                return FakeHttpResponse(201)
+            payload = json.dumps(
+                [
+                    {
+                        "email": "supabase@example.com",
+                        "platform": "android",
+                        "requested_at": "2026-11-10T00:00:00+00:00",
+                    }
+                ]
+            ).encode("utf-8")
+            return FakeHttpResponse(200, payload)
+
+        with patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_SERVICE_ROLE_KEY": "test-service-role-key",
+            },
+        ), patch("main.urllib_request.urlopen", side_effect=fake_urlopen):
+            submit = self.client.post(
+                "/beta",
+                data={"email": "Supabase@Example.com", "platform": "android", "consent": "yes"},
+            )
+            authorization = "Basic " + base64.b64encode(b"test-admin:test-password").decode()
+            dashboard = self.client.get(
+                "/admin/beta", headers={"Authorization": authorization}
+            )
+
+        self.assertEqual(submit.status_code, 201)
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn("supabase@example.com", dashboard.text)
+        self.assertIn("<td>Android</td>", dashboard.text)
+        self.assertFalse(Path(os.environ["DATABASE_PATH"]).exists())
+        self.assertEqual(len(captured_requests), 2)
+        post_req, _ = captured_requests[0]
+        self.assertEqual(post_req.full_url, "https://example.supabase.co/rest/v1/beta_requests")
+        self.assertEqual(json.loads(post_req.data.decode("utf-8"))["email"], "supabase@example.com")
+
+    def test_partial_or_failing_supabase_configuration_fails_visibly(self):
+        with patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_SERVICE_ROLE_KEY": "",
+            },
+        ):
+            with self.assertLogs("main", level="ERROR") as partial_logs:
+                partial = self.client.post(
+                    "/beta",
+                    data={"email": "user@example.com", "platform": "ios", "consent": "yes"},
+                )
+
+        with patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_SERVICE_ROLE_KEY": "secret-service-key",
+            },
+        ), patch(
+            "main.urllib_request.urlopen",
+            side_effect=urllib_error.URLError("connection refused"),
+        ):
+            with self.assertLogs("main", level="ERROR") as error_logs:
+                failed = self.client.post(
+                    "/beta",
+                    data={"email": "user@example.com", "platform": "ios", "consent": "yes"},
+                )
+
+        self.assertEqual(partial.status_code, 503)
+        self.assertEqual(failed.status_code, 503)
+        self.assertIn("We couldn’t save your request right now.", failed.text)
+        combined_logs = "\n".join(partial_logs.output + error_logs.output)
+        self.assertNotIn("user@example.com", combined_logs)
+        self.assertNotIn("secret-service-key", combined_logs)
+
+    def test_mongodb_storage_is_used_when_explicitly_configured(self):
+        stored_docs = []
+
+        class FakeCursor(list):
+            def sort(self, key, direction):
+                return self
+
+            def limit(self, count):
+                return self
+
+        class FakeCollection:
+            def insert_one(self, doc):
+                stored_docs.append(dict(doc))
+
+            def find(self, filt, projection):
+                return FakeCursor(stored_docs)
+
+        class FakeClient:
+            def __init__(self):
+                self.db_names = []
+
+            def __getitem__(self, db_name):
+                self.db_names.append(db_name)
+                return {"beta_requests": FakeCollection()}
+
+            def close(self):
+                pass
+
+        fake_client = FakeClient()
+
+        with patch.dict(
+            os.environ,
+            {
+                "MONGODB_URI": "mongodb+srv://user:secret@cluster.example.mongodb.net/",
+                "MONGODB_DATABASE": "owolot_customer",
+            },
+        ), patch("main.open_mongodb_client", return_value=fake_client):
+            submit = self.client.post(
+                "/beta",
+                data={"email": "Mongo@Example.com", "platform": "ios", "consent": "yes"},
+            )
+            authorization = "Basic " + base64.b64encode(b"test-admin:test-password").decode()
+            dashboard = self.client.get(
+                "/admin/beta", headers={"Authorization": authorization}
+            )
+
+        self.assertEqual(submit.status_code, 201)
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn("mongo@example.com", dashboard.text)
+        self.assertIn("<td>iOS</td>", dashboard.text)
+        self.assertEqual(fake_client.db_names, ["owolot_customer", "owolot_customer"])
+        self.assertFalse(Path(os.environ["DATABASE_PATH"]).exists())
+
+

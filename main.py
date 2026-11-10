@@ -3,12 +3,16 @@ import binascii
 from contextlib import closing
 import hmac
 import html
+import json
 import logging
 import os
 from pathlib import Path
 import re
 import sqlite3
 from datetime import datetime, timezone
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 import uvicorn
 from fasthtml.common import fast_app
@@ -434,6 +438,185 @@ def open_database() -> sqlite3.Connection:
     return connection
 
 
+def mongodb_config() -> tuple[str, str] | None:
+    uri = os.environ.get("MONGODB_URI", "").strip()
+    if not uri:
+        return None
+    if not (uri.startswith("mongodb://") or uri.startswith("mongodb+srv://")):
+        raise RuntimeError("MONGODB_URI must start with mongodb:// or mongodb+srv://.")
+    database_name = os.environ.get("MONGODB_DATABASE", "owolot").strip() or "owolot"
+    return uri, database_name
+
+
+def open_mongodb_client(uri: str):
+    from pymongo import MongoClient
+
+    return MongoClient(
+        uri,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000,
+        socketTimeoutMS=5000,
+    )
+
+
+def supabase_config() -> tuple[str, str] | None:
+    url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not url and not key:
+        return None
+    if not url or not key:
+        raise RuntimeError(
+            "Both SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set when configuring Supabase."
+        )
+    parsed = urllib_parse.urlsplit(url)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        raise RuntimeError("SUPABASE_URL must be a valid HTTP or HTTPS URL.")
+    return url, key
+
+
+def save_beta_request(email: str, platform: str, requested_at: str) -> None:
+    mongodb = mongodb_config()
+    supabase = supabase_config()
+    if mongodb is not None and supabase is not None:
+        raise RuntimeError("Configure either MONGODB_URI or SUPABASE_URL, not both.")
+
+    if mongodb is not None:
+        uri, database_name = mongodb
+        try:
+            with closing(open_mongodb_client(uri)) as client:
+                client[database_name]["beta_requests"].insert_one(
+                    {
+                        "email": email,
+                        "platform": platform,
+                        "requested_at": requested_at,
+                    }
+                )
+        except Exception as exc:
+            raise RuntimeError("MongoDB request failed") from exc
+        return
+
+    if supabase is not None:
+        base_url, api_key = supabase
+        endpoint = f"{base_url}/rest/v1/beta_requests"
+        payload = json.dumps(
+            {
+                "email": email,
+                "platform": platform,
+                "requested_at": requested_at,
+            }
+        ).encode("utf-8")
+        req = urllib_request.Request(
+            endpoint,
+            data=payload,
+            method="POST",
+            headers={
+                "apikey": api_key,
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=5) as response:
+                if not (200 <= response.status < 300):
+                    raise RuntimeError(f"Supabase returned HTTP {response.status}")
+        except urllib_error.URLError as exc:
+            raise RuntimeError("Supabase request failed") from exc
+        return
+
+    with closing(open_database()) as connection, connection:
+        connection.execute(
+            "INSERT INTO beta_requests (email, platform, requested_at) VALUES (?, ?, ?)",
+            (email, platform, requested_at),
+        )
+
+
+def load_beta_requests() -> list[dict[str, str]]:
+    mongodb = mongodb_config()
+    supabase = supabase_config()
+    if mongodb is not None and supabase is not None:
+        raise RuntimeError("Configure either MONGODB_URI or SUPABASE_URL, not both.")
+
+    if mongodb is not None:
+        uri, database_name = mongodb
+        try:
+            with closing(open_mongodb_client(uri)) as client:
+                cursor = (
+                    client[database_name]["beta_requests"]
+                    .find({}, {"_id": 0, "email": 1, "platform": 1, "requested_at": 1})
+                    .sort("_id", -1)
+                    .limit(500)
+                )
+                items = list(cursor)
+        except Exception as exc:
+            raise RuntimeError("MongoDB request failed") from exc
+
+        return [
+            {
+                "email": str(item["email"]),
+                "platform": str(item["platform"]),
+                "requested_at": str(item["requested_at"]),
+            }
+            for item in items
+        ]
+
+    if supabase is not None:
+        base_url, api_key = supabase
+        query = urllib_parse.urlencode(
+            {
+                "select": "email,platform,requested_at",
+                "order": "id.desc",
+                "limit": "500",
+            }
+        )
+        endpoint = f"{base_url}/rest/v1/beta_requests?{query}"
+        req = urllib_request.Request(
+            endpoint,
+            method="GET",
+            headers={
+                "apikey": api_key,
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=5) as response:
+                if not (200 <= response.status < 300):
+                    raise RuntimeError(f"Supabase returned HTTP {response.status}")
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Supabase request failed") from exc
+
+        if not isinstance(body, list):
+            raise RuntimeError("Unexpected Supabase response payload")
+
+        records: list[dict[str, str]] = []
+        for item in body:
+            if not isinstance(item, dict):
+                raise RuntimeError("Unexpected Supabase row format")
+            records.append(
+                {
+                    "email": str(item["email"]),
+                    "platform": str(item["platform"]),
+                    "requested_at": str(item["requested_at"]),
+                }
+            )
+        return records
+
+    with closing(open_database()) as connection, connection:
+        rows = connection.execute(
+            "SELECT email, platform, requested_at FROM beta_requests ORDER BY id DESC LIMIT 500"
+        ).fetchall()
+    return [
+        {
+            "email": str(row["email"]),
+            "platform": str(row["platform"]),
+            "requested_at": str(row["requested_at"]),
+        }
+        for row in rows
+    ]
+
+
 def admin_is_authenticated(request: Request) -> bool:
     expected_username = os.environ.get("BETA_ADMIN_USERNAME")
     expected_password = os.environ.get("BETA_ADMIN_PASSWORD")
@@ -522,12 +705,8 @@ async def submit_beta_request(request: Request) -> Response:
         )
 
     try:
-        with closing(open_database()) as connection, connection:
-            connection.execute(
-                "INSERT INTO beta_requests (email, platform, requested_at) VALUES (?, ?, ?)",
-                (email, platform, datetime.now(timezone.utc).isoformat()),
-            )
-    except sqlite3.Error:
+        save_beta_request(email, platform, datetime.now(timezone.utc).isoformat())
+    except (sqlite3.Error, RuntimeError):
         logger.exception("Could not save beta access request")
         return beta_page(
             message="We couldn’t save your request right now. Please try again later.",
@@ -559,11 +738,8 @@ def beta_admin(request: Request) -> Response:
         return admin_unauthorized()
 
     try:
-        with closing(open_database()) as connection, connection:
-            requests = connection.execute(
-                "SELECT email, platform, requested_at FROM beta_requests ORDER BY id DESC LIMIT 500"
-            ).fetchall()
-    except (sqlite3.Error, OSError):
+        requests = load_beta_requests()
+    except (sqlite3.Error, OSError, RuntimeError, KeyError):
         logger.exception("Could not load beta access requests")
         return HTMLResponse(
             "Beta requests could not be loaded. Check server configuration.",

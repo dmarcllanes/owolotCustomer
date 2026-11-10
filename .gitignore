@@ -5,3 +5,7 @@ build/
 *.egg-info/
 .sesskey
 data/
+.vercel/
+.env
+.env.*
+.DS_Store

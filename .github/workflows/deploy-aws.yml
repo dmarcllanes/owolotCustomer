@@ -27,6 +27,7 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: owolot-customer
   STACK_NAME: owolot-customer
+  ADMIN_PASSWORD_PARAM: /owolot-customer/beta-admin-password
 
 jobs:
   deploy:
@@ -58,6 +59,17 @@ jobs:
               --repository-name "$ECR_REPOSITORY" \
               --image-scanning-configuration scanOnPush=true \
               --encryption-configuration encryptionType=AES256
+          fi
+
+      - name: Ensure SSM admin password parameter exists
+        run: |
+          if ! aws ssm get-parameter --name "$ADMIN_PASSWORD_PARAM" >/dev/null 2>&1; then
+            generated_pw="$(openssl rand -base64 32 | tr -d '=@/\"\\ \n' | head -c 32)"
+            aws ssm put-parameter \
+              --name "$ADMIN_PASSWORD_PARAM" \
+              --description "Generated admin password for Owolot beta request dashboard" \
+              --type SecureString \
+              --value "$generated_pw" >/dev/null
           fi
 
       - name: Sign in to Amazon ECR
@@ -107,7 +119,36 @@ jobs:
             --parameter-overrides \
               "ImageUri=${IMAGE_URI}" \
               "CloudFrontPrefixListId=${CLOUDFRONT_PREFIX_LIST_ID}" \
+              "AdminPasswordParameterName=${ADMIN_PASSWORD_PARAM}" \
             --no-fail-on-empty-changeset
+
+      - name: Refresh container on EC2 instance via SSM
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          instance_id="$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+            --output text)"
+          if [ -n "$instance_id" ] && [ "$instance_id" != "None" ]; then
+            for _ in $(seq 1 24); do
+              ping_status="$(aws ssm describe-instance-information \
+                --filters "Key=InstanceIds,Values=${instance_id}" \
+                --query 'InstanceInformationList[0].PingStatus' \
+                --output text 2>/dev/null || true)"
+              if [ "$ping_status" = "Online" ]; then
+                break
+              fi
+              sleep 5
+            done
+            cmd_id="$(aws ssm send-command \
+              --instance-ids "$instance_id" \
+              --document-name "AWS-RunShellScript" \
+              --parameters "commands=[\"/usr/local/bin/owolot-deploy ${IMAGE_URI}\"]" \
+              --query 'Command.CommandId' \
+              --output text)"
+            aws ssm wait command-executed --command-id "$cmd_id" --instance-id "$instance_id"
+          fi
 
       - name: Show deployment URLs
         run: |
