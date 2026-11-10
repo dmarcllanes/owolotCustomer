@@ -60,7 +60,7 @@ PAGE = """<!doctype html>
     <meta property="og:type" content="website">
     <meta property="og:title" content="__PRODUCT_NAME__ — Your money, managed">
     <meta property="og:description" content="A local-first personal finance app for planning, understanding, and managing your money with more intention.">
-    <link rel="icon" type="image/png" href="/assets/mascot/happy.png">
+    <link rel="icon" type="image/png" href="/assets/fb_orb_favicon.png">
     <link rel="stylesheet" href="/static/site.css">
     <title>__PRODUCT_NAME__ — Your money, managed</title>
   </head>
@@ -75,7 +75,7 @@ PAGE = """<!doctype html>
         <nav class="main-nav" aria-label="Main navigation">
           <a href="#features">What it does</a>
           <a href="#how-it-works">How it works</a>
-          <a href="#privacy">Privacy</a>
+          <a href="/privacy">Privacy policy</a>
           <a class="nav-cta" href="/beta">Request beta access</a>
         </nav>
       </div>
@@ -201,7 +201,7 @@ PAGE = """<!doctype html>
             <li><span class="check" aria-hidden="true">✓</span><span><strong>AI is optional.</strong> If enabled, your question and the financial context you consent to share go through the app's configured Supabase gateway to Groq.</span></li>
             <li><span class="check" aria-hidden="true">✓</span><span><strong>You stay in control.</strong> Agent-proposed changes require your explicit approval before they are applied.</span></li>
           </ul>
-          <p class="privacy-note">This is a product overview, not a published privacy policy. No provider retention or security guarantees are made here.</p>
+          <p class="privacy-note">This is a brief product overview. See the <a href="/privacy">full Privacy Policy</a> for details about data handling and service providers.</p>
         </div>
       </section>
 
@@ -262,6 +262,7 @@ PAGE = """<!doctype html>
         <nav aria-label="Footer navigation">
           <a href="#features">Features</a>
           <a href="#privacy">Privacy overview</a>
+          <a href="/privacy">Privacy policy</a>
           <a href="#faq">FAQs</a>
           <a href="/beta">Beta access</a>
         </nav>
@@ -283,7 +284,7 @@ SITE_HEADER = """<header class="site-header">
     <nav class="main-nav" aria-label="Main navigation">
       <a href="/#features">What it does</a>
       <a href="/#how-it-works">How it works</a>
-      <a href="/#privacy">Privacy</a>
+      <a href="/privacy">Privacy policy</a>
       <a class="nav-cta" href="/beta">Request beta access</a>
     </nav>
   </div>
@@ -356,7 +357,7 @@ def beta_page(
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#fbfaff">
     <meta name="description" content="Request access to the Owolot beta and learn how installation works on iOS and Android.">
-    <link rel="icon" type="image/png" href="/assets/mascot/happy.png">
+    <link rel="icon" type="image/png" href="/assets/fb_orb_favicon.png">
     <link rel="stylesheet" href="/static/site.css">
     <title>Request beta access — Owolot</title>
   </head>
@@ -730,6 +731,122 @@ def home() -> HTMLResponse:
     return HTMLResponse(PAGE)
 
 
+@app.get("/privacy")
+def privacy() -> HTMLResponse:
+    document = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#fbfaff">
+    <meta name="description" content="Read the Owolot privacy policy, including details about local data, optional account and sync features, household sharing, and online AI.">
+    <link rel="icon" type="image/png" href="/assets/fb_orb_favicon.png">
+    <link rel="stylesheet" href="/static/site.css">
+    <title>Privacy Policy — Owolot</title>
+  </head>
+  <body class="privacy-policy-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    {SITE_HEADER}
+    <main id="main" class="privacy-policy section-wrap">
+      <header class="privacy-policy-header">
+        <p class="eyebrow">Privacy, clearly explained</p>
+        <h1>Owolot Privacy Policy</h1>
+        <p class="privacy-policy-date"><strong>Last updated:</strong> November 10, 2026</p>
+        <p>Owolot (“we,” “us,” or “our”) is a personal finance app that helps you organize accounts, transactions, budgets, bills, goals, and related financial information. You can use the app locally without creating an account. Optional account, sync, household-sharing, and online AI features involve sending some information to our service providers as described below.</p>
+      </header>
+
+      <section aria-labelledby="privacy-information">
+        <h2 id="privacy-information">Information you provide and use</h2>
+        <p>Depending on the features you choose, Owolot may process:</p>
+        <ul>
+          <li><strong>Financial records:</strong> accounts, balances, transactions, payees, categories, notes, budgets, recurring items, goals, debts, exchange rates, and related records you enter or import.</li>
+          <li><strong>Account information:</strong> when you sign in with Apple or Google, we receive account identifiers and information the provider makes available, such as your email address and, where provided, your name.</li>
+          <li><strong>Preferences and consent choices:</strong> such as currency, app preferences, and whether you have opted in to cloud sync or online AI.</li>
+          <li><strong>Household-sharing information:</strong> if you use household features, information needed to create or join a household, manage invitations and membership, and share the specific records you choose to share.</li>
+          <li><strong>AI request information:</strong> if you opt in to online AI and use it, your question and the limited financial context disclosed for that request.</li>
+          <li><strong>Imported-file information:</strong> files you select for import are processed by the app to create financial records.</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="privacy-storage">
+        <h2 id="privacy-storage">Where information is stored</h2>
+        <h3>On your device</h3>
+        <p>Owolot’s core finance features work without an account or internet connection. Financial records and app preferences are stored in an encrypted database on your device. The database key is stored using the device’s secure storage.</p>
+        <p>Local reminders are scheduled on your device. Owolot uses your device’s authentication feature, if enabled, to protect access to the app; Owolot does not receive your fingerprint or face data.</p>
+        <p>Signing out does not erase financial information stored on your device. You can delete local app data through the app’s settings. Deleting the app may also remove locally stored data, depending on your device and its backup settings.</p>
+        <h3>Optional account and cloud sync</h3>
+        <p>Signing in with Apple or Google is optional and does not, by itself, enable cloud sync. If you separately turn on sync, selected financial records and preferences are encrypted before being sent to Supabase for syncing between your devices. Supabase also processes account, device, consent, and sync-related information needed to provide the service.</p>
+        <p>If you use household features, information you choose to share may be made available to the household members you invite or accept. Only share information with people you trust.</p>
+      </section>
+
+      <section aria-labelledby="privacy-ai">
+        <h2 id="privacy-ai">Optional online AI</h2>
+        <p>Online AI is a separate, optional feature. If you enable it and submit a request, Owolot sends your question and the limited, consented financial context needed for that request through our Supabase service to Groq to generate a response.</p>
+        <p>Our service records request metadata, such as the job, status, model, and token counts; it does not store the request prompt or generated response in its application database. Groq processes the request under its own applicable terms and privacy practices. Review <a href="https://groq.com/privacy-policy/">Groq’s privacy information</a> for details about its processing and retention.</p>
+        <p>AI responses are informational suggestions, not financial, investment, tax, or legal advice. Owolot does not let AI make financial changes without your explicit approval.</p>
+      </section>
+
+      <section aria-labelledby="privacy-use">
+        <h2 id="privacy-use">How we use information</h2>
+        <p>We use information to:</p>
+        <ul>
+          <li>Provide the features you request, including local finance tools, sign-in, sync, household sharing, and AI responses.</li>
+          <li>Keep the service secure, prevent misuse, troubleshoot failures, and enforce user choices and permissions.</li>
+          <li>Respond to support requests and comply with applicable legal obligations.</li>
+        </ul>
+        <p>We do not sell your personal information. Owolot does not connect to your bank, initiate payments, or access your contacts, location, camera, or photo library in the current app.</p>
+      </section>
+
+      <section aria-labelledby="privacy-providers">
+        <h2 id="privacy-providers">Service providers</h2>
+        <p>We use service providers to support selected features:</p>
+        <ul>
+          <li><strong>Apple and Google</strong> provide sign-in options when you choose to use them.</li>
+          <li><strong>Supabase</strong> provides authentication, cloud storage, and server functions for users who choose account, sync, household, or AI features.</li>
+          <li><strong>Groq</strong> processes online AI requests only when you choose to use that feature.</li>
+        </ul>
+        <p>These providers process information under their own terms and privacy policies. Their handling of operational logs, backups, and information retained under their policies may differ from the records stored in Owolot’s application database.</p>
+      </section>
+
+      <section aria-labelledby="privacy-retention">
+        <h2 id="privacy-retention">Retention and deletion</h2>
+        <p>Your local data remains on your device until you delete it or remove the app, subject to your device’s backup settings.</p>
+        <p>You can request deletion of your signed-in cloud account through the account-deletion control in Owolot’s settings. Deleting your account removes the account and associated cloud records from our application database. It <strong>does not automatically erase local data</strong> on your devices; delete local data separately on each device. Signing out is not the same as deleting your account or local data.</p>
+        <p>Service providers may retain information in backups or operational systems according to their own retention practices and legal obligations. Deleting your Owolot account does not necessarily immediately remove information already processed by a provider. Contact the relevant provider for information about its retention practices.</p>
+      </section>
+
+      <section aria-labelledby="privacy-security">
+        <h2 id="privacy-security">Security</h2>
+        <p>We use safeguards designed to protect information, including encrypted local storage, secure device storage for the local database key, and encrypted connections to our services. No method of storage or transmission can be guaranteed completely secure.</p>
+      </section>
+
+      <section aria-labelledby="privacy-children">
+        <h2 id="privacy-children">Children’s privacy</h2>
+        <p>Owolot is a general personal finance app and is not designed for children under 13. We do not knowingly seek to collect personal information from children under 13. If you believe a child has provided personal information through an account, contact us.</p>
+      </section>
+
+      <section aria-labelledby="privacy-choices">
+        <h2 id="privacy-choices">Your choices</h2>
+        <p>You can use local features without signing in. You can choose whether to enable cloud sync and online AI, and you can manage local data, sign out, or request account deletion through the app’s settings. You can also choose whether to use household-sharing features.</p>
+      </section>
+
+      <section aria-labelledby="privacy-changes">
+        <h2 id="privacy-changes">Changes to this policy</h2>
+        <p>We may update this policy as the app or its services change. We will update the date at the top when we publish a revised version. Please review this page periodically.</p>
+      </section>
+
+      <section aria-labelledby="privacy-contact">
+        <h2 id="privacy-contact">Contact us</h2>
+        <p>For privacy questions or requests, contact:</p>
+        <p><strong>Email:</strong> <a href="mailto:dandigital1688@gmail.com">dandigital1688@gmail.com</a></p>
+      </section>
+    </main>
+    {SITE_FOOTER}
+  </body>
+</html>"""
+    return HTMLResponse(document)
+
+
 @app.get("/beta")
 def beta() -> HTMLResponse:
     return beta_page()
@@ -901,6 +1018,7 @@ def beta_admin(request: Request) -> Response:
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/png" href="/assets/fb_orb_favicon.png">
     <title>Beta requests — Owolot admin</title>
     <link rel="stylesheet" href="/static/site.css">
   </head>

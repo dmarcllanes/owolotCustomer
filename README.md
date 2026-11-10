@@ -173,8 +173,9 @@ list on port `8000`; HTTP viewers are redirected to HTTPS.
   opt-in and Play installation instructions yourself.
 - No production domain is confirmed, so the page intentionally has no canonical
   URL.
-- A publisher-approved privacy policy, support contact, publisher identity, and
-  any legal terms have not been provided. The page labels its privacy section
-  as an overview and does not invent those destinations or details.
+- `/privacy` contains the privacy policy for store submission. Before publishing
+  the site or submitting its URL in App Store Connect or Google Play Console,
+  verify the policy against the exact app build and current provider terms,
+  confirm the listed privacy contact, and deploy to a public HTTPS domain.
 - `PRODUCT_NAME` in `main.py` is the single source for the displayed product
   name.

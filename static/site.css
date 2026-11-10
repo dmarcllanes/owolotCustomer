@@ -1668,3 +1668,56 @@ h2 {
     transition-duration: 0.01ms !important;
   }
 }
+
+.privacy-policy {
+  max-width: 860px;
+  padding-block: 62px 88px;
+}
+
+.privacy-policy-header {
+  margin-bottom: 42px;
+}
+
+.privacy-policy h1 {
+  margin-bottom: 12px;
+  font-size: clamp(2.5rem, 5vw, 3.8rem);
+}
+
+.privacy-policy-date {
+  margin-bottom: 26px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.privacy-policy section {
+  margin-top: 34px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+.privacy-policy h2 {
+  margin-bottom: 14px;
+  font-size: clamp(1.55rem, 3vw, 2rem);
+  letter-spacing: -0.04em;
+}
+
+.privacy-policy h3 {
+  margin: 24px 0 8px;
+  color: var(--ink);
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.privacy-policy p,
+.privacy-policy li {
+  color: var(--ink-soft);
+}
+
+.privacy-policy li + li {
+  margin-top: 10px;
+}
+
+.privacy-policy a:not(.brand) {
+  color: var(--violet-dark);
+  text-underline-offset: 3px;
+}

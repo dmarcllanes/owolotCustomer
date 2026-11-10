@@ -47,7 +47,22 @@ class LandingPageTests(unittest.TestCase):
         self.assertIn('id="faq"', response.text)
         self.assertIn('id="download"', response.text)
         self.assertIn('href="/beta">Request beta access</a>', response.text)
+        self.assertIn('href="/privacy">Privacy policy</a>', response.text)
         self.assertIn("<title>Owolot — Your money, managed</title>", response.text)
+
+    def test_privacy_policy_page_is_public_and_contains_app_store_disclosures(self):
+        response = self.client.get("/privacy")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<main id="main" class="privacy-policy section-wrap">', response.text)
+        self.assertIn("<title>Privacy Policy — Owolot</title>", response.text)
+        self.assertIn("Last updated:</strong> November 10, 2026", response.text)
+        self.assertIn("account-deletion control in Owolot’s settings", response.text)
+        self.assertIn("Household-sharing information", response.text)
+        self.assertIn("Groq’s privacy information", response.text)
+        self.assertIn('href="mailto:dandigital1688@gmail.com"', response.text)
+        self.assertIn('href="/assets/fb_orb_favicon.png"', response.text)
+        self.assertIn('href="/privacy">Privacy policy</a>', response.text)
 
     def test_page_uses_verified_product_and_privacy_language_without_fake_store_links(self):
         response = self.client.get("/")
@@ -161,6 +176,7 @@ class LandingPageTests(unittest.TestCase):
     def test_stylesheet_and_violet_mascot_are_served(self):
         stylesheet = self.client.get("/static/site.css")
         mascot = self.client.get("/assets/mascot/happy.png")
+        favicon = self.client.get("/assets/fb_orb_favicon.png")
 
         self.assertEqual(stylesheet.status_code, 200)
         self.assertIn("prefers-reduced-motion", stylesheet.text)
@@ -169,6 +185,12 @@ class LandingPageTests(unittest.TestCase):
         self.assertEqual(
             mascot.content,
             (Path(__file__).parents[1] / "assets/mascot/happy.png").read_bytes(),
+        )
+        self.assertEqual(favicon.status_code, 200)
+        self.assertEqual(favicon.headers["content-type"], "image/png")
+        self.assertEqual(
+            favicon.content,
+            (Path(__file__).parents[1] / "assets/fb_orb_favicon.png").read_bytes(),
         )
 
     def test_supabase_storage_is_used_when_explicitly_configured(self):
@@ -340,6 +362,5 @@ class LandingPageTests(unittest.TestCase):
         self.assertEqual(good_login.status_code, 200)
         self.assertIn("<h1>Beta access requests</h1>", good_login.text)
         self.assertIn('action="/admin/logout"', good_login.text)
-
 
 
