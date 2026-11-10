@@ -29,7 +29,7 @@ STATIC_DIR = BASE_DIR / "static"
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 logger = logging.getLogger(__name__)
 
-app, _ = fast_app(
+_fasthtml_app, _ = fast_app(
     static_path=str(STATIC_DIR),
     canonical=False,
     default_hdrs=False,
@@ -38,6 +38,7 @@ app, _ = fast_app(
     sess_cls=None,
     secret_key="sessions-disabled",
 )
+app = _fasthtml_app
 app.routes.insert(
     0,
     Mount("/assets", app=StaticFiles(directory=ASSETS_DIR), name="assets"),
